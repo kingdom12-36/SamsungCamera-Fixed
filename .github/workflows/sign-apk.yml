@@ -1,0 +1,85 @@
+name: Sign APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/*.apk"
+  workflow_dispatch: {}
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Find unsigned APK
+        id: find
+        run: |
+          apk_path=$(find . -maxdepth 3 -iname "*unsigned*.apk" | head -n 1)
+          if [ -z "$apk_path" ]; then
+            apk_path=$(find . -maxdepth 3 -iname "*.apk" ! -iname "*signed*" | head -n 1)
+          fi
+          if [ -z "$apk_path" ]; then
+            echo "No APK found in repo" >&2
+            exit 1
+          fi
+          echo "Found APK: $apk_path"
+          echo "apk_path=$apk_path" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android build-tools
+        uses: android-actions/setup-android@v3
+
+      - name: Install build-tools 34
+        run: sdkmanager "build-tools;34.0.0"
+
+      - name: Generate fresh debug keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore debug.keystore \
+            -alias androiddebugkey \
+            -storepass android \
+            -keypass android \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Zipalign
+        run: |
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          src="${{ steps.find.outputs.apk_path }}"
+          out="${src%.apk}-aligned.apk"
+          "$BT/zipalign" -f -p 4 "$src" "$out"
+          echo "aligned_path=$out" >> "$GITHUB_ENV"
+
+      - name: Sign APK
+        run: |
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          src="$aligned_path"
+          out="${src%-aligned.apk}-signed.apk"
+          "$BT/apksigner" sign \
+            --ks debug.keystore \
+            --ks-key-alias androiddebugkey \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out "$out" \
+            "$src"
+          echo "Signed APK: $out"
+          echo "signed_path=$out" >> "$GITHUB_ENV"
+
+      - name: Verify signature
+        run: |
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          "$BT/apksigner" verify --print-certs "$signed_path"
+
+      - name: Upload signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-apk
+          path: ${{ env.signed_path }}
