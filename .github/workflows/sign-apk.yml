@@ -78,8 +78,14 @@ jobs:
           BT="$ANDROID_HOME/build-tools/34.0.0"
           "$BT/apksigner" verify --print-certs "$signed_path"
 
-      - name: Upload signed APK
+      - name: Zip signed APK
+        run: |
+          zip_out="${signed_path%.apk}.zip"
+          zip -j "$zip_out" "$signed_path"
+          echo "zip_path=$zip_out" >> "$GITHUB_ENV"
+
+      - name: Upload signed APK zip
         uses: actions/upload-artifact@v4
         with:
-          name: signed-apk
-          path: ${{ env.signed_path }}
+          name: signed-apk-zip
+          path: ${{ env.zip_path }}
